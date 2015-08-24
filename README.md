@@ -28,11 +28,32 @@ Extracting default values as a list from postgresql stored procedures via querin
 - [http://stackoverflow.com/questions/30590264/sql-stored-proc-default-parameter-values]
 - [http://stackoverflow.com/questions/982798/is-it-possible-to-have-a-default-parameter-for-a-mysql-stored-procedure]
 
--This solution therefore is anything but elegant. However, it has thusfar the only solution that consistently works with a nearly every possible sort of naming conventions and default values. It basically consists of extracting known argument names, known argument types, and known default and parameter totals and composing a regex string that is essentially:
+-This solution therefore is anything but elegant. However, thus far, the solution consistently works with nearly every possible parameter name, parameter type, and default value. It basically consists of extracting known argument names, known argument types, and known default and parameter totals and composing a regex string that is essentially:
 
-            SELECT regexp_matches(full_parameter_string, known_string_before(parameter_data)known_string_after)
+            SELECT regexp_matches(full_parameter_string, 
+                 				known_string_before
+                 					||(parameter_data)||
+                 						known_string_after
+                 		 );
 
-If anyone has a better way to do this, please contribute. This issue has been driving me nuts for a while, and as mentioned before this solution is anything but elegant.
+If anyone has a better way to do this, feel free to contribute. This particular postgres behavior puzzle has been driving me nuts for a while, and as mentioned before this solution is anything but elegant.
+
+- Note that these are all valid type names in postgres. Because quotes and double quotes are perfectly valid characters(if correctly terminated.) Therefore regexp exclusion for characters within a set of quotes becomes unfeasable (lookahead/lookbehind regex expressions don't seem to be supported in postgresql reg_exp functions):
+
+             CREATE TYPE "quotes" AS (t text);
+             CREATE TYPE "'more quotes'" AS (t text);
+             CREATE TYPE "'extra'', '', quotes'''" AS (t text);
+             CREATE TYPE "'extra"" '','MORE', "", quotes""'" AS (t text);
+             CREATE TYPE ", text DEFAULT 'text DEFAULT'::text, " AS (t text);
+
+- Furthermore, each of the following is a valid parameter definition: (If anyone actually does this, they shoud probably be beaten, but this demonstrates worst case scenarios)
+
+             bigint,	
+             has_name bigint, 
+             "name in quotes" text,
+             "'more quotes'" text,
+             type_name_bs ", text DEFAULT NULL::text, " DEFAULT NULL::", text DEFAULT NULL::text, " 
+             ', text DEFAULT text DEFAULT::text, ' text DEFAULT 'DEFAULT '', , , ,hello''::text[]'::text
 
 ## TODO
 - clean up the query names, 
