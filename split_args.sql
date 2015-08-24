@@ -30,42 +30,43 @@ CREATE OR REPLACE FUNCTION test.drop_all_function_overloads(
 		END;
    $BODY$ LANGUAGE plpgsql VOLATILE COST 100;
 
-------- legal type names to test
-CREATE TYPE "quoted type" AS (t text);
-CREATE TYPE "'extra quotes'" AS (t text);
-CREATE TYPE "'extra'' '' quotes'''" AS (t text);
-CREATE TYPE "'extra"" '' quotes""'" AS (t text);
-CREATE TYPE ", text DEFAULT NULL::text, " AS (t text);
-
--------- drop previous version of stored procedure
+----- Drop the function using the new types
 SELECT test.drop_all_function_overloads('defaults');
 
--------- the stored procedure who's params will be split
+---- Valid type names to test
+DROP TYPE IF EXISTS "quoted type";
+CREATE TYPE "quoted type" AS (t text);
+
+DROP TYPE IF EXISTS "'more"" 'quotes' "" '";
+CREATE TYPE "'more"" 'quotes' "" '" AS (t text);
+
+DROP TYPE IF EXISTS "'commas&, '', '', quotes'''";
+CREATE TYPE "'commas&, '', '', quotes'''" AS (t text);
+
+DROP TYPE IF EXISTS "', ,"", '', text DEFAULT""'";
+CREATE TYPE "', ,"", '', text DEFAULT""'" AS (t text);
+
+DROP TYPE IF EXISTS ", text DEFAULT NULL::text, ";
+CREATE TYPE ", text DEFAULT NULL::text, " AS (t text);
+
+
+------ The function used to demonstrate all parameter string variations
 CREATE OR REPLACE FUNCTION public.defaults(
-						bigint,	
-						has_name bigint, 
-					        "name in quotes" text,
-					        "'more quotes'" text,
-					        type_name_bs ", text DEFAULT NULL::text, " DEFAULT NULL::", text DEFAULT NULL::text, " 
-						arg_id text DEFAULT 'DEFAULT '', , , ,hello''::text[]'
-						
+						bigint,													--- anonymous parameter
+						has_name bigint, 											--- named parameter
+					        "has_name bigint" text,											--- quoted parameter name
+					        "'has_name text', 'has_name'" text,									--- quoted name variation 
+					        type_name ", text DEFAULT NULL::text, ",					        		--- quoted type example
+					        "text DEFAULT NULL::text" ", text DEFAULT NULL::text, " DEFAULT NULL::", text DEFAULT NULL::text, "  	--- totally valid D:					
 					)
   RETURNS boolean AS $BODY$
-            DECLARE
-            var_valid_pub text := false;
-            var_valid_campaign text := false;
             BEGIN
-
 		RETURN "works";
             END
         $BODY$
   LANGUAGE plpgsql VOLATILE  COST 100;
 
-
-
-
-
--------- the split query
+------- THE QUERY uses pg_proc & information_schema.parameters
  WITH all_function_data AS (
 			       SELECT
 				p.oid AS poid,
@@ -83,49 +84,50 @@ CREATE OR REPLACE FUNCTION public.defaults(
 			       FROM pg_proc p
 			       LEFT JOIN pg_namespace n ON n.oid = p.pronamespace WHERE proname = 'defaults'
 			),
-	  known_arg_vals AS (SELECT * FROM (SELECT 
-					poid,
-					schema_name,
-					arg_num,
-					def_num,
-					fs,
-					generate_series(1,arg_num) AS arg_idx,
-					oidvectortypes(unnest(att)::oidvector) AS arg_type,
-					CASE WHEN arg_names NOTNULL THEN unnest(arg_names) ELSE '' END AS arg_name	,
-					def_vals				 
-					FROM all_function_data)t),
-	  full_arg_vals AS(SELECT
-					arg_idx,
-	  				poid,
-					schema_name,
-					arg_num,
-					def_num,
-					fs, 
-					GREATEST(arg_idx-(arg_num - def_num),0) AS def_idx,			
-					arg_name,
-					arg_type,
-					CASE WHEN length(arg_name)>0 THEN '["'''']*'||regexp_replace(arg_name,'[^\w\s]+','.+','g')||'["'''']*\s' ELSE '' END as arg_name_clean,
-					'["'''']*'||regexp_replace(arg_type,'[^\w\s]+','.+','g')||'["'''']*'||CASE WHEN(def_num>0 AND (arg_idx-(arg_num - def_num)>0) )THEN '\sDEFAULT\s.*' ELSE '' END  AS arg_type_clean,										
-					def_vals
-					FROM known_arg_vals k
-					LEFT JOIN information_schema.parameters isp ON regexp_replace(isp.specific_name, '(^\w+_)', '', 'g')::oid = k.poid AND ordinal_position=k.arg_idx),
-	arg_vals_with_defaults AS(
+  known_arg_vals AS (SELECT * FROM (SELECT 
+				poid,
+				schema_name,
+				arg_num,
+				def_num,
+				fs,
+				generate_series(1,arg_num) AS arg_idx,
+				oidvectortypes(unnest(att)::oidvector) AS arg_type,
+				CASE WHEN arg_names NOTNULL THEN unnest(arg_names) ELSE '' END AS arg_name	,
+				def_vals				 
+				FROM all_function_data)t),
+  full_arg_vals AS(SELECT
+				arg_idx,
+				poid,
+				schema_name,
+				arg_num,
+				def_num,
+				fs, 
+				GREATEST(arg_idx-(arg_num - def_num),0) AS def_idx,			
+				arg_name,
+				arg_type,
+				CASE WHEN length(arg_name)>0 THEN '["'''']*'||regexp_replace(arg_name,'[^\w\s]+','.+','g')||'["'''']*\s' ELSE '' END as arg_name_clean,
+				'["'''']*'||regexp_replace(arg_type,'[^\w\s]+','.+','g')||'["'''']*'||CASE WHEN(def_num>0 AND (arg_idx-(arg_num - def_num)>0) )THEN '\sDEFAULT\s.*' ELSE '' END  AS arg_type_clean,										
+				def_vals
+				FROM known_arg_vals k
+				LEFT JOIN information_schema.parameters isp ON regexp_replace(isp.specific_name, '(^\w+_)', '', 'g')::oid = k.poid AND ordinal_position=k.arg_idx),
+arg_vals_with_defaults AS(
+			SELECT 
+				arg_idx,
+				def_idx,
+				regexp_matches(fs,'^'||reg_before||'('||arg_name_clean||arg_type_clean||')'||reg_after||'$') AS found_parameter_string
+			  FROM(
 				SELECT 
-					arg_idx,
-					def_idx,
-					regexp_matches(fs,'^'||reg_before||'('||arg_name_clean||arg_type_clean||')'||reg_after||'$') AS found
-				  FROM(
-					SELECT 
-					fv.fs,
-					def_num,
-					fv.arg_name,
-					fv.arg_type,
-					arg_idx,
-					def_idx
-					,fv.arg_name_clean
-					,fv.arg_type_clean
-					,CASE WHEN arg_idx > 1 THEN array_to_string(ARRAY(SELECT COALESCE(arg_name_clean||'')||arg_type_clean FROM full_arg_vals f WHERE f.arg_idx < fv.arg_idx),',\s')||',\s' ELSE '' END AS reg_before
-					,CASE WHEN arg_idx < arg_num THEN '\,\s'||array_to_string(ARRAY(SELECT arg_name_clean||arg_type_clean FROM full_arg_vals f WHERE f.arg_idx > fv.arg_idx),',\s') ELSE '' END AS reg_after
-					FROM  full_arg_vals fv
-				      ) param_strings
-		      );
+				fv.fs,
+				def_num,
+				fv.arg_name,
+				fv.arg_type,
+				arg_idx,
+				def_idx
+				,fv.arg_name_clean
+				,fv.arg_type_clean
+				,CASE WHEN arg_idx > 1 THEN array_to_string(ARRAY(SELECT COALESCE(arg_name_clean||'')||arg_type_clean FROM full_arg_vals f WHERE f.arg_idx < fv.arg_idx),',\s')||',\s' ELSE '' END AS reg_before
+				,CASE WHEN arg_idx < arg_num THEN '\,\s'||array_to_string(ARRAY(SELECT arg_name_clean||arg_type_clean FROM full_arg_vals f WHERE f.arg_idx > fv.arg_idx),',\s') ELSE '' END AS reg_after
+				FROM  full_arg_vals fv
+			      ) param_strings
+	      )
+SELECT * FROM arg_vals_with_defaults;
