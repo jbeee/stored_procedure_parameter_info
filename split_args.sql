@@ -30,15 +30,17 @@ CREATE OR REPLACE FUNCTION test.drop_all_function_overloads(
 		END;
    $BODY$ LANGUAGE plpgsql VOLATILE COST 100;
 
-
+------- legal type names to test
 CREATE TYPE "quoted type" AS (t text);
 CREATE TYPE "'extra quotes'" AS (t text);
 CREATE TYPE "'extra'' '' quotes'''" AS (t text);
 CREATE TYPE "'extra"" '' quotes""'" AS (t text);
 CREATE TYPE ", text DEFAULT NULL::text, " AS (t text);
 
-
+-------- drop previous version of stored procedure
 SELECT test.drop_all_function_overloads('defaults');
+
+-------- the stored procedure who's params will be split
 CREATE OR REPLACE FUNCTION public.defaults(
 						bigint,	
 						has_name bigint, 
@@ -60,6 +62,10 @@ CREATE OR REPLACE FUNCTION public.defaults(
   LANGUAGE plpgsql VOLATILE  COST 100;
 
 
+
+
+
+-------- the split query
  WITH all_function_data AS (
 			       SELECT
 				p.oid AS poid,
